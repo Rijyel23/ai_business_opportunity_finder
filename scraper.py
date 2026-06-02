@@ -455,6 +455,7 @@ def _detail_description_from_sections(sections: dict[str, str]) -> str:
     preferred_headings = [
         "Summary",
         "Location Details",
+        "About the Business",
         "About the Opportunity",
         "Marketing support",
         "Training provided",

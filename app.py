@@ -94,9 +94,10 @@ with st.sidebar:
     max_rank_results = st.slider(
         "Max listings to send to AI",
         min_value=5,
-        max_value=50,
-        value=20,
+        max_value=10,
+        value=10,
         step=5,
+        help="The local LLM is most reliable when ranking a compact shortlist.",
     )
     enrich_details = st.checkbox(
         "Visit listing detail pages",

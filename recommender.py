@@ -6,7 +6,7 @@ from typing import Any
 from openai import BadRequestError, OpenAI, OpenAIError
 
 
-MAX_LISTINGS_FOR_PROMPT = 30
+MAX_LISTINGS_FOR_PROMPT = 10
 DEFAULT_MODEL = "smart"
 
 
@@ -38,7 +38,9 @@ def rank_opportunities(
     content = response.choices[0].message.content or "[]"
     parsed = _parse_json_response(content)
     if not parsed:
-        return _heuristic_rank(listings, criteria)
+        raise ValueError(
+            "The AI response could not be parsed as JSON. Try ranking fewer listings or refining the criteria."
+        )
 
     return _normalize_recommendations(parsed, listings)
 
@@ -101,8 +103,7 @@ def _build_prompt(listings: list[dict], criteria: str) -> str:
             "business_type": listing.get("business_type"),
             "category": listing.get("category"),
             "description": listing.get("description"),
-            "full_description": listing.get("full_description"),
-            "detail_sections": listing.get("detail_sections"),
+            "detail_summary": _compact_listing_text(listing),
             "posted_date": listing.get("posted_date"),
             "detail_posted_date": listing.get("detail_posted_date"),
             "url": listing.get("url"),
@@ -117,27 +118,78 @@ User criteria:
 Listings:
 {json.dumps(payload, indent=2)}
 
-Return a JSON array with up to 10 objects. Each object must contain:
-- index: the original listing index
-- title: listing title
-- score: integer from 1 to 10
-- reason: concise explanation of why it is promising
-- suggested_next_step: practical follow-up action
-Base the score primarily on the detail-page information when available.
+Return only valid JSON in this exact shape:
+{{
+  "recommendations": [
+    {{
+      "index": 0,
+      "title": "listing title",
+      "score": 8,
+      "reason": "specific concise explanation based on the listing details",
+      "suggested_next_step": "practical follow-up action"
+    }}
+  ]
+}}
+
+Rules:
+- Return up to 10 recommendations.
+- Score from 1 to 10, where 10 is strongest fit for the user criteria.
+- Use the detail_summary field as the main evidence when available.
+- Do not include markdown, comments, or text outside JSON.
 """
+
+
+def _compact_listing_text(listing: dict) -> str:
+    sections = listing.get("detail_sections") or {}
+    important_sections = [
+        "Summary",
+        "About the Business",
+        "About the Opportunity",
+        "Location Details",
+        "Marketing support",
+        "Training provided",
+        "Skills",
+        "History",
+    ]
+
+    parts: list[str] = []
+    for section in important_sections:
+        section_text = sections.get(section)
+        if section_text:
+            parts.append(f"{section}: {_clip(section_text, 900)}")
+
+    if not parts:
+        fallback = listing.get("full_description") or listing.get("detail_text") or listing.get("description")
+        if fallback:
+            parts.append(_clip(fallback, 2500))
+
+    return "\n".join(parts)[:5000]
+
+
+def _clip(value: str | None, limit: int) -> str:
+    text = " ".join((value or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}..."
 
 
 def _parse_json_response(content: str) -> Any:
     cleaned = content.strip()
 
     if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`")
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
+        cleaned = cleaned.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
 
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
+        object_start = cleaned.find("{")
+        object_end = cleaned.rfind("}")
+        if object_start >= 0 and object_end > object_start:
+            try:
+                return json.loads(cleaned[object_start : object_end + 1])
+            except json.JSONDecodeError:
+                pass
+
         start = cleaned.find("[")
         end = cleaned.rfind("]")
         if start >= 0 and end > start:

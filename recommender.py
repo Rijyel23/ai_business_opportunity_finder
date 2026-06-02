@@ -96,8 +96,15 @@ def _build_prompt(listings: list[dict], criteria: str) -> str:
             "index": index,
             "title": listing.get("title"),
             "company": listing.get("company"),
+            "location": listing.get("location"),
+            "price": listing.get("price"),
+            "business_type": listing.get("business_type"),
+            "category": listing.get("category"),
             "description": listing.get("description"),
+            "full_description": listing.get("full_description"),
+            "detail_sections": listing.get("detail_sections"),
             "posted_date": listing.get("posted_date"),
+            "detail_posted_date": listing.get("detail_posted_date"),
             "url": listing.get("url"),
         }
         for index, listing in enumerate(listings)
@@ -116,6 +123,7 @@ Return a JSON array with up to 10 objects. Each object must contain:
 - score: integer from 1 to 10
 - reason: concise explanation of why it is promising
 - suggested_next_step: practical follow-up action
+Base the score primarily on the detail-page information when available.
 """
 
 
@@ -187,13 +195,20 @@ def _heuristic_rank(listings: list[dict], criteria: str) -> list[dict]:
             [
                 listing.get("title", ""),
                 listing.get("company", ""),
+                listing.get("location", ""),
+                listing.get("price", ""),
+                listing.get("business_type", ""),
+                listing.get("category", ""),
                 listing.get("description", ""),
+                listing.get("full_description", ""),
+                listing.get("detail_text", ""),
             ]
         ).lower()
         matches = sum(1 for term in criteria_terms if term in text)
-        description_bonus = 2 if len(listing.get("description", "")) > 80 else 0
+        detail_bonus = 2 if listing.get("detail_scraped") else 0
+        description_bonus = 2 if len(listing.get("full_description") or listing.get("description", "")) > 250 else 0
         link_bonus = 1 if listing.get("url") else 0
-        score = min(10, max(1, 4 + matches + description_bonus + link_bonus))
+        score = min(10, max(1, 4 + matches + detail_bonus + description_bonus + link_bonus))
 
         scored.append(
             {

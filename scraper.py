@@ -93,6 +93,70 @@ def _report_progress(progress_callback, **status) -> None:
         progress_callback(status)
 
 
+def enrich_listing_details(
+    listings: list[dict],
+    max_details: int | None = None,
+    progress_callback=None,
+) -> list[dict]:
+    limit = len(listings) if max_details is None else min(max_details, len(listings))
+    enriched: list[dict] = []
+
+    for index, listing in enumerate(listings, start=1):
+        if index > limit:
+            enriched.append(listing)
+            continue
+
+        detail_url = listing.get("url", "")
+        merged = dict(listing)
+
+        if detail_url:
+            try:
+                detail_data = scrape_listing_detail(detail_url)
+                merged.update({key: value for key, value in detail_data.items() if value})
+                merged["detail_scraped"] = True
+                status = "Detail page scraped."
+            except requests.RequestException as exc:
+                merged["detail_scraped"] = False
+                merged["detail_error"] = str(exc)
+                status = f"Detail scrape failed: {exc}"
+        else:
+            merged["detail_scraped"] = False
+            status = "No detail URL found."
+
+        enriched.append(merged)
+        _report_progress(
+            progress_callback,
+            current=index,
+            total=limit,
+            title=merged.get("title", "Untitled listing"),
+            url=detail_url,
+            status=status,
+        )
+
+    return enriched
+
+
+def scrape_listing_detail(url: str) -> dict:
+    html = _fetch_html(url)
+    soup = BeautifulSoup(html, "html.parser")
+
+    title = _first_text(soup, ["h1"])
+    sections = _extract_detail_sections(soup)
+    page_lines = _page_text_lines(soup)
+    full_description = _detail_description_from_sections(sections)
+
+    return {
+        "detail_title": title,
+        "detail_posted_date": _find_detail_posted_date(page_lines, title),
+        "location": _find_detail_value(page_lines, "Location") or "",
+        "price": _find_detail_value(page_lines, "Investment level") or "",
+        "category": _find_detail_value(page_lines, "Industry") or "",
+        "full_description": full_description,
+        "detail_sections": sections,
+        "detail_text": _clean_text(" ".join(page_lines[:220])),
+    }
+
+
 def filter_recent_listings(listings: Iterable[dict], days: int = 7) -> list[dict]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     recent: list[dict] = []
@@ -298,6 +362,115 @@ def _find_seek_price_and_type(card: Tag) -> tuple[str, str]:
             business_type = text
 
     return price, business_type
+
+
+def _page_text_lines(soup: BeautifulSoup) -> list[str]:
+    return [
+        _clean_text(line)
+        for line in soup.get_text("\n", strip=True).splitlines()
+        if _clean_text(line)
+    ]
+
+
+def _find_detail_value(lines: list[str], label: str) -> str:
+    normalized_label = label.lower().rstrip(":")
+
+    for index, line in enumerate(lines):
+        normalized_line = line.lower().rstrip(":")
+        if normalized_line == normalized_label and index + 1 < len(lines):
+            return lines[index + 1]
+
+        prefix = f"{label}:"
+        if line.lower().startswith(prefix.lower()):
+            return _clean_text(line[len(prefix) :])
+
+    return ""
+
+
+def _find_detail_posted_date(lines: list[str], title: str) -> str:
+    for index, line in enumerate(lines):
+        if title and line == title and index + 1 < len(lines):
+            candidate = lines[index + 1]
+            if _looks_like_posted_date(candidate):
+                return candidate
+
+        if _looks_like_posted_date(line):
+            return line
+
+    return ""
+
+
+def _looks_like_posted_date(value: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(today|yesterday|now|\d+\s+(?:minute|hour|day|week|month)s?\s+ago)\b",
+            value,
+            flags=re.IGNORECASE,
+        )
+        or re.search(r"\b\d{1,2}:\d{2}\s*(?:am|pm)\b", value, flags=re.IGNORECASE)
+    )
+
+
+def _extract_detail_sections(soup: BeautifulSoup) -> dict[str, str]:
+    ignored_headings = {
+        "send an enquiry",
+        "enquiry sent",
+        "you might also like...",
+        "share this ad",
+        "report this ad",
+        "get email recommendation",
+        "connect with us",
+        "company",
+        "customers",
+        "legals",
+    }
+    sections: dict[str, str] = {}
+
+    for heading in soup.find_all(["h2", "h3", "h4"]):
+        heading_text = _clean_text(heading.get_text(" ", strip=True))
+        if not heading_text or heading_text.lower() in ignored_headings:
+            continue
+
+        body_parts: list[str] = []
+        for sibling in heading.next_siblings:
+            if isinstance(sibling, Tag) and sibling.name in {"h2", "h3", "h4"}:
+                break
+
+            if isinstance(sibling, Tag):
+                text = _clean_text(sibling.get_text(" ", strip=True))
+            else:
+                text = _clean_text(str(sibling))
+
+            if text:
+                body_parts.append(text)
+
+        body = _clean_text(" ".join(body_parts))
+        if body:
+            sections[heading_text] = body[:4000]
+
+    return sections
+
+
+def _detail_description_from_sections(sections: dict[str, str]) -> str:
+    preferred_headings = [
+        "Summary",
+        "Location Details",
+        "About the Opportunity",
+        "Marketing support",
+        "Training provided",
+        "Skills",
+        "History",
+    ]
+    parts = [
+        f"{heading}: {sections[heading]}"
+        for heading in preferred_headings
+        if sections.get(heading)
+    ]
+
+    if not parts:
+        parts = [f"{heading}: {body}" for heading, body in sections.items()]
+
+    return _clean_text(" ".join(parts))[:8000]
 
 
 def _select_text(card: Tag, selector: str | None) -> str:

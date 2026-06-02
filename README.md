@@ -11,6 +11,7 @@ Streamlit app for scraping recent business listings and ranking the strongest op
 - Sends filtered listings to an OpenAI-compatible API for ranking.
 - Shows raw listings and top recommendations in the UI.
 - Shows page-by-page scraping progress and status updates.
+- Optionally visits each listing detail page for richer AI analysis.
 - Provides downloadable CSV files for all listings, recent listings, and AI recommendations.
 - Includes a local fallback ranker when no API key is configured.
 
@@ -41,11 +42,12 @@ streamlit run app.py
 
 1. Confirm the target URL in the sidebar (default points to SEEK last-7-days listings).
 2. Set a safety page cap and click **Scrape recent listings**.
-3. Watch live progress updates while pages are scraped.
-4. Review the **Recent listings** and **All scraped listings** tabs.
-5. Choose a criteria preset (or edit the prompt manually).
-6. Click **Rank opportunities with AI** to produce top recommendations.
-7. Export results via CSV download buttons.
+3. Keep **Visit listing detail pages** enabled to collect full detail-page content.
+4. Watch live progress updates while search pages and detail pages are scraped.
+5. Review the **Recent listings** and **All scraped listings** tabs.
+6. Choose a criteria preset (or edit the prompt manually).
+7. Click **Rank opportunities with AI** to produce top recommendations.
+8. Export results via CSV download buttons.
 
 The app is prefilled with the SEEK Business last-7-days URL:
 
@@ -53,7 +55,7 @@ The app is prefilled with the SEEK Business last-7-days URL:
 https://www.seekbusiness.com.au/businesses-for-sale?d=7&pg=1
 ```
 
-For SEEK, pagination uses the `pg` query parameter. The app can scrape up to the selected safety page cap and stops early when a page returns no new listings.
+For SEEK, pagination uses the `pg` query parameter. The app can scrape up to the selected safety page cap and stops early when a page returns no new listings. Detail enrichment follows each listing URL and extracts full listing sections such as summary, location details, opportunity description, marketing support, training, skills, and history when available.
 
 ## Live Test Notes
 

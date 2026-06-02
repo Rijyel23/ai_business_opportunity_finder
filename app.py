@@ -5,7 +5,12 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from recommender import rank_opportunities
-from scraper import ListingSelectors, filter_recent_listings, scrape_listings
+from scraper import (
+    ListingSelectors,
+    enrich_listing_details,
+    filter_recent_listings,
+    scrape_listings,
+)
 
 
 load_dotenv()
@@ -92,6 +97,24 @@ with st.sidebar:
         max_value=50,
         value=20,
         step=5,
+    )
+    enrich_details = st.checkbox(
+        "Visit listing detail pages",
+        value=True,
+        help="Adds full descriptions and detail-page fields for stronger AI analysis.",
+    )
+    enrich_all_details = st.checkbox(
+        "Enrich every recent listing",
+        value=True,
+        disabled=not enrich_details,
+    )
+    max_detail_pages = st.number_input(
+        "Max detail pages to enrich",
+        min_value=1,
+        max_value=5000,
+        value=100,
+        disabled=not enrich_details or enrich_all_details,
+        help="Set this high to enrich every recent listing. Lower values keep live demos fast.",
     )
 
     st.divider()
@@ -182,6 +205,38 @@ if scrape_clicked:
             progress_callback=update_scrape_progress,
         )
         recent = filter_recent_listings(scraped, days=7)
+
+        if enrich_details and recent:
+            enrich_bar = st.progress(0)
+            enrich_status = st.empty()
+            enrich_log = st.empty()
+            enrich_logs = []
+            enrichment_limit = (
+                len(recent) if enrich_all_details else min(int(max_detail_pages), len(recent))
+            )
+
+            def update_enrich_progress(status: dict) -> None:
+                current = int(status.get("current", 0))
+                total = int(status.get("total", enrichment_limit)) or 1
+                enrich_bar.progress(min(current / total, 1.0))
+
+                message = (
+                    f"Detail {current} of {total} | "
+                    f"{status.get('title', 'Untitled listing')} | "
+                    f"{status.get('status', 'Scraping detail page...')}"
+                )
+                enrich_status.info(message)
+                enrich_logs.append(f"{message}\n{status.get('url', '')}")
+                enrich_log.code("\n\n".join(enrich_logs[-10:]))
+
+            recent = enrich_listing_details(
+                recent,
+                max_details=enrichment_limit,
+                progress_callback=update_enrich_progress,
+            )
+            enrich_bar.progress(1.0)
+            enrich_status.success(f"Detail enrichment complete for {enrichment_limit} listings.")
+
         st.session_state["scraped_listings"] = scraped
         st.session_state["recent_listings"] = recent
         progress_bar.progress(1.0)
